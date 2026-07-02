@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Kütüphane</title>
+  <meta name="description" content="Kişisel PDF kitaplığınız — çevrimdışı çalışır, kitaplarınız tarayıcınızda kalır.">
+  <meta name="theme-color" content="#7a5230">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="app-header">
+    <a class="logo" href="#" id="logo-link" aria-label="Kütüphane ana sayfa">
+      <svg class="logo-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17.5a.5.5 0 0 1-.5.5H6.5A2.5 2.5 0 0 0 4 21.5V4.5Z" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M9 6.5h7M9 9.5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <span class="logo-text">Kütüphane</span>
+    </a>
+
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/>
+        <path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+      <input type="search" id="search-input" placeholder="Kitap veya yazar ara…" autocomplete="off" aria-label="Kitap veya yazar ara">
+    </div>
+
+    <div class="header-actions">
+      <button class="icon-btn" id="theme-toggle" title="Tema değiştir" aria-label="Tema değiştir">
+        <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5.3 5.3l1.7 1.7M17 17l1.7 1.7M18.7 5.3 17 7M7 17l-1.7 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="menu-wrap">
+        <button class="icon-btn" id="menu-toggle" title="Menü" aria-label="Menü" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="5.5" r="1.7" fill="currentColor"/>
+            <circle cx="12" cy="12" r="1.7" fill="currentColor"/>
+            <circle cx="12" cy="18.5" r="1.7" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="menu-dropdown" id="app-menu" hidden>
+          <button class="menu-item" id="menu-backup">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Yedekle
+          </button>
+          <button class="menu-item" id="menu-restore">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14V3m0 0L8 7m4-4 4 4M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Geri Yükle
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="library" id="library-view">
+    <div class="book-grid" id="book-grid"></div>
+
+    <div class="empty-state" id="empty-state" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17.5a.5.5 0 0 1-.5.5H6.5A2.5 2.5 0 0 0 4 21.5V4.5Z" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      </svg>
+      <h2>Kitaplığınız henüz boş</h2>
+      <p>İlk kitabınızı ekleyin — PDF'leriniz yalnızca bu cihazda, tarayıcınızda saklanır.</p>
+      <button class="btn btn-primary" id="empty-add-btn">Kitap Ekle</button>
+    </div>
+
+    <div class="no-results" id="no-results" hidden>
+      <p>Aramanızla eşleşen kitap bulunamadı.</p>
+    </div>
+  </main>
+
+  <button class="fab" id="add-book-btn" title="Kitap Ekle" aria-label="Kitap Ekle">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    <span>Kitap Ekle</span>
+  </button>
+
+  <!-- Okuyucu -->
+  <div class="reader" id="reader-view" hidden>
+    <div class="reader-toolbar">
+      <button class="icon-btn" id="reader-back" title="Kitaplığa dön" aria-label="Kitaplığa dön">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="reader-title" id="reader-title"></div>
+      <div class="reader-controls">
+        <button class="icon-btn" id="zoom-out" title="Uzaklaştır" aria-label="Uzaklaştır">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button class="icon-btn" id="zoom-in" title="Yakınlaştır" aria-label="Yakınlaştır">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="reader-body" id="reader-body">
+      <canvas id="pdf-canvas"></canvas>
+    </div>
+    <div class="reader-pagebar">
+      <button class="icon-btn" id="page-prev" title="Önceki sayfa" aria-label="Önceki sayfa">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="page-indicator">
+        <input type="number" id="page-input" min="1" value="1" aria-label="Sayfa numarası"> / <span id="page-total">1</span>
+      </span>
+      <button class="icon-btn" id="page-next" title="Sonraki sayfa" aria-label="Sonraki sayfa">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Kitap ekle / düzenle -->
+  <dialog class="dialog" id="book-dialog">
+    <form id="book-form" method="dialog">
+      <h2 id="book-dialog-title">Kitap Ekle</h2>
+
+      <div class="field" id="pdf-field">
+        <label for="pdf-input">PDF dosyası</label>
+        <label class="file-drop" id="pdf-drop">
+          <input type="file" id="pdf-input" accept="application/pdf,.pdf">
+          <span class="file-drop-text" id="pdf-drop-text">PDF seçmek için tıklayın</span>
+        </label>
+      </div>
+
+      <div class="field">
+        <label for="cover-input">Kapak görseli <span class="optional">(isteğe bağlı)</span></label>
+        <div class="cover-row">
+          <label class="file-drop cover-drop" id="cover-drop">
+            <input type="file" id="cover-input" accept="image/jpeg,image/png,image/webp">
+            <img id="cover-preview" alt="" hidden>
+            <span class="file-drop-text" id="cover-drop-text">Görsel seç</span>
+          </label>
+          <button type="button" class="btn btn-ghost btn-small" id="cover-remove" hidden>Kapağı kaldır</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="title-input">Başlık</label>
+        <input type="text" id="title-input" required maxlength="200" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label for="author-input">Yazar</label>
+        <input type="text" id="author-input" maxlength="120" autocomplete="off" placeholder="Bilinmiyor">
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="book-cancel">Vazgeç</button>
+        <button type="submit" class="btn btn-primary" id="book-save">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Onay -->
+  <dialog class="dialog dialog-confirm" id="confirm-dialog">
+    <h2 id="confirm-title">Emin misiniz?</h2>
+    <p id="confirm-text"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn btn-ghost" id="confirm-cancel">Vazgeç</button>
+      <button type="button" class="btn btn-danger" id="confirm-ok">Sil</button>
+    </div>
+  </dialog>
+
+  <input type="file" id="restore-input" accept=".klib" hidden>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/reader.js"></script>
+  <script src="js/backup.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
