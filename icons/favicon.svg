@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0" stop-color="#8a5f38"/>
-      <stop offset="1" stop-color="#5d3d21"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#4DA2FF"/>
+      <stop offset="1" stop-color="#0062E6"/>
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="14" fill="url(#bg)"/>
-  <g transform="translate(16 14)">
-    <path d="M0 5A5 5 0 0 1 5 0h27v33.5a1.5 1.5 0 0 1-1.5 1.5H5a5 5 0 0 0-5 5V5Z" fill="none" stroke="#f5ead8" stroke-width="3"/>
-    <path d="M0 35a5 5 0 0 1 5-5h27" fill="none" stroke="#f5ead8" stroke-width="3"/>
-    <path d="M9 9.5h14M9 15.5h10" stroke="#f5ead8" stroke-width="2.6" stroke-linecap="round"/>
+  <g transform="translate(16 12)" fill="none" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">
+    <path d="M0 5A5 5 0 0 1 5 0h27v33.5a1.5 1.5 0 0 1-1.5 1.5H5a5 5 0 0 0-5 5V5Z"/>
+    <path d="M0 35a5 5 0 0 1 5-5h27"/>
+    <path d="M9 9.5h14M9 15.5h10" stroke-width="2.6" stroke-linecap="round"/>
   </g>
 </svg>

@@ -112,11 +112,11 @@ const App = (() => {
     const titleSpans = lines
       .map(
         (l, i) =>
-          `<text x="100" y="${startY + i * lineHeight}" text-anchor="middle" fill="var(--ph-text)" font-family="'Cormorant Garamond', Georgia, serif" font-size="24" font-weight="700">${escapeXml(l)}</text>`
+          `<text x="100" y="${startY + i * lineHeight}" text-anchor="middle" fill="var(--ph-text)" font-family="-apple-system, system-ui, sans-serif" font-size="22" font-weight="700">${escapeXml(l)}</text>`
       )
       .join("");
     const authorSpan = author
-      ? `<text x="100" y="262" text-anchor="middle" fill="var(--ph-text)" opacity="0.75" font-family="Inter, sans-serif" font-size="12">${escapeXml(author)}</text>`
+      ? `<text x="100" y="262" text-anchor="middle" fill="var(--ph-text)" opacity="0.85" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="500">${escapeXml(author)}</text>`
       : "";
 
     return `<svg viewBox="0 0 200 300" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice" role="img" aria-hidden="true">
@@ -433,24 +433,73 @@ const App = (() => {
   // --- arama ---
   searchInput.addEventListener("input", render);
 
-  // --- tema ---
+  // --- görünüm (tema): "system" | "light" | "dark" ---
   const THEME_KEY = "kutuphane-theme";
-  function applyTheme(theme) {
+  const themeDialog = document.getElementById("theme-dialog");
+  const themeItems = [...themeDialog.querySelectorAll(".action-item")];
+  const themeMedia = matchMedia("(prefers-color-scheme: dark)");
+  let themeMode = "system";
+
+  function resolveTheme(mode) {
+    if (mode === "dark" || mode === "light") return mode;
+    return themeMedia.matches ? "dark" : "light"; // sistem
+  }
+  function applyMode(mode) {
+    themeMode = mode;
+    const theme = resolveTheme(mode);
     document.documentElement.setAttribute("data-theme", theme);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.content = theme === "dark" ? "#1d1812" : "#7a5230";
+    if (meta) meta.content = theme === "dark" ? "#000000" : "#F9F9F9";
+    for (const item of themeItems) {
+      item.classList.toggle("selected", item.dataset.mode === mode);
+    }
   }
   function initTheme() {
     const stored = localStorage.getItem(THEME_KEY);
-    const theme =
-      stored || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-    applyTheme(theme);
+    applyMode(stored === "light" || stored === "dark" ? stored : "system");
   }
-  document.getElementById("theme-toggle").addEventListener("click", () => {
-    const next =
-      document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-    applyTheme(next);
-    localStorage.setItem(THEME_KEY, next);
+  // "Sistem" seçiliyken cihazın teması değişirse canlı uygula
+  themeMedia.addEventListener("change", () => {
+    if (themeMode === "system") applyMode("system");
+  });
+
+  // yumuşak (aşağı kayarak) kapanış
+  function closeThemeDialog() {
+    if (!themeDialog.open || themeDialog.classList.contains("closing")) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      themeDialog.close();
+      return;
+    }
+    themeDialog.classList.add("closing");
+    setTimeout(() => {
+      themeDialog.classList.remove("closing");
+      themeDialog.close();
+    }, 300); // CSS sheet-down süresiyle aynı
+  }
+
+  // menüdeki "Görünüm" → seçici sayfa
+  document.getElementById("menu-theme").addEventListener("click", () => {
+    appMenu.hidden = true;
+    menuToggle.setAttribute("aria-expanded", "false");
+    themeDialog.showModal();
+  });
+  for (const item of themeItems) {
+    item.addEventListener("click", () => {
+      const mode = item.dataset.mode;
+      applyMode(mode);
+      localStorage.setItem(THEME_KEY, mode);
+      closeThemeDialog();
+    });
+  }
+  document.getElementById("theme-cancel").addEventListener("click", closeThemeDialog);
+  // dışarı dokununca kapat
+  themeDialog.addEventListener("click", (e) => {
+    if (e.target === themeDialog) closeThemeDialog();
+  });
+  // Esc de yumuşak kapansın
+  themeDialog.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    closeThemeDialog();
   });
 
   // --- header menüsü ---
@@ -518,11 +567,15 @@ const App = (() => {
   // --- ekleme butonları ---
   document.getElementById("add-book-btn").addEventListener("click", openAddDialog);
   document.getElementById("empty-add-btn").addEventListener("click", openAddDialog);
-  document.getElementById("logo-link").addEventListener("click", (e) => {
-    e.preventDefault();
-    searchInput.value = "";
-    render();
-  });
+
+  // --- large-title: kaydırınca kompakt başlığı göster ---
+  const navBar = document.getElementById("nav-bar");
+  const largeTitle = document.getElementById("large-title");
+  const titleObserver = new IntersectionObserver(
+    ([entry]) => navBar.classList.toggle("scrolled", !entry.isIntersecting),
+    { rootMargin: "-44px 0px 0px 0px", threshold: 0 }
+  );
+  titleObserver.observe(largeTitle);
 
   // --- başlangıç ---
   async function loadBooks() {

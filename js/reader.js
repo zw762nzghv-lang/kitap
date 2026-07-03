@@ -1,4 +1,4 @@
-/* pdf.js tabanlı okuyucu — kaldığı sayfayı hatırlar. */
+/* pdf.js tabanlı okuyucu — sürekli (yukarıdan aşağıya) kaydırmalı; kaldığı yeri hatırlar. */
 "use strict";
 
 if (window.pdfjsLib) {
@@ -10,8 +10,7 @@ const Reader = (() => {
   const view = document.getElementById("reader-view");
   const titleEl = document.getElementById("reader-title");
   const body = document.getElementById("reader-body");
-  const canvas = document.getElementById("pdf-canvas");
-  const ctx = canvas.getContext("2d");
+  const pagesEl = document.getElementById("pdf-pages");
   const pageInput = document.getElementById("page-input");
   const pageTotal = document.getElementById("page-total");
   const btnPrev = document.getElementById("page-prev");
@@ -20,18 +19,28 @@ const Reader = (() => {
   let book = null;        // App'in bellekteki kitap nesnesi (paylaşılan referans)
   let pdfDoc = null;
   let blobUrl = null;
-  let currentPage = 1;
-  let zoom = 1;            // genişliğe-sığdır'ın çarpanı
-  let renderTask = null;
+  let wrappers = [];      // her sayfa için sarmalayıcı <div>
+  let renderTasks = new Map(); // index -> pdf.js render görevi
+  let io = null;          // görünüre giren sayfaları tembel render eden gözlemci
+  let currentIndex = 0;   // en üstteki görünür sayfa (0 tabanlı)
+  let zoom = 1;           // genişliğe-sığdır çarpanı
+  let estAspect = 1.414;  // yükseklik/genişlik tahmini (A4 varsayılan)
   let saveTimer = null;
+  let scrollRaf = null;
+  let closeTimer = null;
   let onCloseCb = null;
 
   async function open(bookRecord, onClose) {
+    clearTimeout(closeTimer);      // önceki kapanış animasyonunu iptal et
+    pagesEl.textContent = "";
+    wrappers = [];
     book = bookRecord;
     onCloseCb = onClose || null;
     zoom = 1;
     titleEl.textContent = book.title;
     view.hidden = false;
+    void view.offsetWidth;         // reflow → geçiş çalışsın
+    view.classList.add("reader--open");
     document.body.style.overflow = "hidden";
 
     try {
@@ -40,16 +49,28 @@ const Reader = (() => {
       blobUrl = URL.createObjectURL(fileRec.pdf);
       pdfDoc = await pdfjsLib.getDocument(blobUrl).promise;
 
-      // toplam sayfa bilinmiyorsa/yanlışsa düzelt
       if (book.totalPages !== pdfDoc.numPages) {
         book.totalPages = pdfDoc.numPages;
         scheduleSave();
       }
 
-      currentPage = Math.min(Math.max(book.currentPage || 1, 1), pdfDoc.numPages);
+      // ilk sayfanın en-boy oranını tahmin olarak al
+      const first = await pdfDoc.getPage(1);
+      const fv = first.getViewport({ scale: 1 });
+      estAspect = fv.height / fv.width;
+
       pageTotal.textContent = pdfDoc.numPages;
       pageInput.max = pdfDoc.numPages;
-      await renderPage();
+
+      buildPages();
+      layout();
+      setupObserver();
+
+      // kaldığı sayfaya konumlan
+      currentIndex = Math.min(Math.max((book.currentPage || 1) - 1, 0), pdfDoc.numPages - 1);
+      jumpToIndex(currentIndex, "auto");
+      updatePageIndicator();
+      renderNear();
     } catch (err) {
       console.error("Okuyucu açılamadı:", err);
       App.toast("Kitap açılamadı — dosya bozuk olabilir.");
@@ -57,53 +78,150 @@ const Reader = (() => {
     }
   }
 
-  async function renderPage() {
-    if (!pdfDoc) return;
-    if (renderTask) {
-      renderTask.cancel();
-      renderTask = null;
+  function buildPages() {
+    pagesEl.textContent = "";
+    wrappers = [];
+    for (let i = 0; i < pdfDoc.numPages; i++) {
+      const w = document.createElement("div");
+      w.className = "pdf-page";
+      w.dataset.page = String(i + 1);
+      w._index = i;
+      w._aspect = estAspect;
+      w._rendered = false;
+      w._rendering = false;
+      const canvas = document.createElement("canvas");
+      w.appendChild(canvas);
+      pagesEl.appendChild(w);
+      wrappers.push(w);
     }
-    const page = await pdfDoc.getPage(currentPage);
+  }
 
-    // genişliğe sığdır: gövde genişliğine göre taban ölçek
-    const padding = 32;
+  // genişliğe sığdır: tüm sayfalar aynı CSS genişliğinde
+  function pageWidth() {
+    const padding = 32; // .reader-body yatay padding (16 + 16)
     const available = Math.max(body.clientWidth - padding, 200);
-    const baseViewport = page.getViewport({ scale: 1 });
-    const fitScale = available / baseViewport.width;
-    const scale = fitScale * zoom;
-    const dpr = window.devicePixelRatio || 1;
-    const viewport = page.getViewport({ scale: scale * dpr });
+    return available * zoom;
+  }
 
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    canvas.style.width = `${viewport.width / dpr}px`;
-    canvas.style.height = `${viewport.height / dpr}px`;
-
-    try {
-      renderTask = page.render({ canvasContext: ctx, viewport });
-      await renderTask.promise;
-      renderTask = null;
-    } catch (err) {
-      if (err && err.name === "RenderingCancelledException") return;
-      throw err;
+  function layout() {
+    const cssW = pageWidth();
+    for (const w of wrappers) {
+      w.style.width = `${cssW}px`;
+      w.style.height = `${cssW * (w._aspect || estAspect)}px`;
     }
+  }
 
-    pageInput.value = currentPage;
-    btnPrev.disabled = currentPage <= 1;
-    btnNext.disabled = currentPage >= pdfDoc.numPages;
-    body.scrollTop = 0;
+  async function render(i) {
+    const w = wrappers[i];
+    if (!w || !pdfDoc || w._rendered || w._rendering) return;
+    w._rendering = true;
+    try {
+      const page = await pdfDoc.getPage(i + 1);
+      if (!pdfDoc) return; // bu arada kapandıysa
+      const baseViewport = page.getViewport({ scale: 1 });
+      w._aspect = baseViewport.height / baseViewport.width;
+
+      const cssW = parseFloat(w.style.width) || pageWidth();
+      w.style.height = `${cssW * w._aspect}px`;
+
+      const dpr = window.devicePixelRatio || 1;
+      const scale = (cssW / baseViewport.width) * dpr;
+      const viewport = page.getViewport({ scale });
+
+      const canvas = w.querySelector("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      const task = page.render({ canvasContext: canvas.getContext("2d"), viewport });
+      renderTasks.set(i, task);
+      await task.promise;
+      renderTasks.delete(i);
+
+      w._rendered = true;
+      w.classList.add("rendered");
+    } catch (err) {
+      if (!(err && err.name === "RenderingCancelledException")) {
+        console.error("Sayfa render edilemedi:", err);
+      }
+    } finally {
+      w._rendering = false;
+    }
+  }
+
+  function unrender(i) {
+    const w = wrappers[i];
+    if (!w) return;
+    const task = renderTasks.get(i);
+    if (task) { task.cancel(); renderTasks.delete(i); }
+    if (!w._rendered && !w._rendering) return;
+    const canvas = w.querySelector("canvas");
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
+    w._rendered = false;
+    w._rendering = false;
+    w.classList.remove("rendered");
+    // yükseklik korunur; kaydırma konumu sabit kalır
+  }
+
+  // görünür pencere çevresindeki sayfaları render et
+  function renderNear() {
+    const span = 2;
+    for (let i = currentIndex - span; i <= currentIndex + span; i++) {
+      if (i >= 0 && i < wrappers.length) render(i);
+    }
+  }
+
+  function setupObserver() {
+    if (io) io.disconnect();
+    io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const i = e.target._index;
+        if (e.isIntersecting) render(i);
+        else unrender(i); // pencereden çıkan sayfaları serbest bırak (bellek)
+      }
+    }, { root: body, rootMargin: "600px 0px" });
+    for (const w of wrappers) io.observe(w);
+  }
+
+  // en üstteki görünür sayfayı bul (currentIndex'ten yürüyerek — ucuz)
+  function updateCurrentFromScroll() {
+    if (view.hidden || !pdfDoc || wrappers.length === 0) return;
+    const bodyTop = body.getBoundingClientRect().top;
+    const threshold = 48;
+    const belowTop = (i) =>
+      wrappers[i].getBoundingClientRect().bottom - bodyTop <= threshold;
+    let i = Math.min(Math.max(currentIndex, 0), wrappers.length - 1);
+    while (i < wrappers.length - 1 && belowTop(i)) i++;
+    while (i > 0 && !belowTop(i - 1)) i--;
+    if (i !== currentIndex) {
+      currentIndex = i;
+      updatePageIndicator();
+      book.currentPage = i + 1;
+      book.lastReadAt = Date.now();
+      scheduleSave();
+    }
+  }
+
+  function updatePageIndicator() {
+    if (document.activeElement !== pageInput) pageInput.value = currentIndex + 1;
+    btnPrev.disabled = currentIndex <= 0;
+    btnNext.disabled = currentIndex >= wrappers.length - 1;
+  }
+
+  function jumpToIndex(i, behavior) {
+    const w = wrappers[i];
+    if (!w) return;
+    const top = body.scrollTop + (w.getBoundingClientRect().top - body.getBoundingClientRect().top) - 8;
+    body.scrollTo({ top, behavior: behavior || "smooth" });
   }
 
   function goTo(pageNum) {
     if (!pdfDoc) return;
-    const target = Math.min(Math.max(pageNum, 1), pdfDoc.numPages);
-    if (target === currentPage) {
-      pageInput.value = currentPage;
-      return;
-    }
-    currentPage = target;
-    renderPage();
-    book.currentPage = currentPage;
+    const i = Math.min(Math.max(pageNum - 1, 0), wrappers.length - 1);
+    currentIndex = i;
+    updatePageIndicator();
+    renderNear();
+    jumpToIndex(i, "smooth");
+    book.currentPage = i + 1;
     book.lastReadAt = Date.now();
     scheduleSave();
   }
@@ -125,59 +243,81 @@ const Reader = (() => {
   }
 
   function close() {
+    if (view.hidden) return;
     flushSave();
-    if (renderTask) {
-      renderTask.cancel();
-      renderTask = null;
-    }
-    if (pdfDoc) {
-      pdfDoc.destroy();
-      pdfDoc = null;
-    }
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl);
-      blobUrl = null;
-    }
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    view.hidden = true;
-    document.body.style.overflow = "";
+    view.classList.remove("reader--open");   // sağa doğru kayarak çık
+    for (const task of renderTasks.values()) task.cancel();
+    renderTasks.clear();
+    if (io) { io.disconnect(); io = null; }
+    if (pdfDoc) { pdfDoc.destroy(); pdfDoc = null; }
+    if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
     const cb = onCloseCb;
     onCloseCb = null;
     book = null;
+    // görsel içerik kayma animasyonu boyunca dursun; sonra temizle
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => {
+      pagesEl.textContent = "";
+      wrappers = [];
+      view.hidden = true;
+      document.body.style.overflow = "";
+    }, 360);
     if (cb) cb();
   }
 
   function setZoom(next) {
+    if (!pdfDoc) return;
     zoom = Math.min(Math.max(next, 0.5), 4);
-    renderPage();
+    const anchor = currentIndex;
+    layout();                       // yeni genişlik/yükseklikler
+    for (let i = 0; i < wrappers.length; i++) unrender(i); // yeni ölçekte yeniden çizilsin
+    jumpToIndex(anchor, "auto");    // konumu koru
+    currentIndex = anchor;
+    renderNear();
   }
 
   // --- olaylar ---
   document.getElementById("reader-back").addEventListener("click", close);
-  btnPrev.addEventListener("click", () => goTo(currentPage - 1));
-  btnNext.addEventListener("click", () => goTo(currentPage + 1));
+  btnPrev.addEventListener("click", () => goTo(currentIndex));       // bir önceki sayfa
+  btnNext.addEventListener("click", () => goTo(currentIndex + 2));   // bir sonraki sayfa
   document.getElementById("zoom-in").addEventListener("click", () => setZoom(zoom * 1.25));
   document.getElementById("zoom-out").addEventListener("click", () => setZoom(zoom / 1.25));
 
   pageInput.addEventListener("change", () => {
     const n = parseInt(pageInput.value, 10);
     if (Number.isFinite(n)) goTo(n);
-    else pageInput.value = currentPage;
+    else pageInput.value = currentIndex + 1;
   });
+
+  body.addEventListener("scroll", () => {
+    if (view.hidden) return;
+    if (scrollRaf) return;
+    scrollRaf = requestAnimationFrame(() => {
+      scrollRaf = null;
+      updateCurrentFromScroll();
+    });
+  }, { passive: true });
 
   document.addEventListener("keydown", (e) => {
     if (view.hidden) return;
     if (e.target === pageInput) return;
-    if (e.key === "ArrowLeft") goTo(currentPage - 1);
-    else if (e.key === "ArrowRight") goTo(currentPage + 1);
+    if (e.key === "ArrowLeft" || e.key === "PageUp") { goTo(currentIndex); e.preventDefault(); }
+    else if (e.key === "ArrowRight" || e.key === "PageDown") { goTo(currentIndex + 2); e.preventDefault(); }
     else if (e.key === "Escape") close();
+    // ArrowUp/ArrowDown/Space: tarayıcının doğal kaydırması
   });
 
   let resizeTimer = null;
   window.addEventListener("resize", () => {
     if (view.hidden || !pdfDoc) return;
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(renderPage, 150);
+    resizeTimer = setTimeout(() => {
+      const anchor = currentIndex;
+      layout();
+      for (let i = 0; i < wrappers.length; i++) unrender(i);
+      jumpToIndex(anchor, "auto");
+      renderNear();
+    }, 150);
   });
 
   // sekme kapanırken bekleyen ilerlemeyi yaz
