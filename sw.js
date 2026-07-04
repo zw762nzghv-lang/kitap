@@ -2,7 +2,7 @@
    fontlar ilk kullanımda cache'lenir; sonrasında her şey çevrimdışı çalışır. */
 "use strict";
 
-const CACHE_NAME = "kutuphane-v3";
+const CACHE_NAME = "kutuphane-v4";
 
 const PRECACHE = [
   "./",

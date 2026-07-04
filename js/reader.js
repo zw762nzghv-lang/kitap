@@ -1,4 +1,13 @@
-/* pdf.js tabanlı okuyucu — sürekli (yukarıdan aşağıya) kaydırmalı; kaldığı yeri hatırlar. */
+/* pdf.js tabanlı okuyucu — sürekli (yukarıdan aşağıya) kaydırmalı; kaldığı yeri hatırlar.
+
+   ÖNEMLİ (iOS siyah ekran çözümü):
+   Her sayfa ekran-dışı bir canvas'a çizilir, ardından bir görüntüye (<img>)
+   dönüştürülür ve canvas DOM'da TUTULMAZ. Nedeni: iOS Safari, DOM'da canlı duran
+   <canvas> backing-store'larını bellek baskısında sessizce boşaltıp siyaha çevirir
+   ve pdf.js bunu bilmediği için yeniden çizmez → okurken siyah ekran. <img> ise
+   tarayıcının görüntü belleği tarafından yönetilir: bellek gerekirse çözümlenmiş
+   bitmap düşürülür ama sıkıştırılmış kaynaktan otomatik yeniden çözümlenir; asla
+   kalıcı siyah kalmaz. */
 "use strict";
 
 if (window.pdfjsLib) {
@@ -19,7 +28,7 @@ const Reader = (() => {
   let book = null;        // App'in bellekteki kitap nesnesi (paylaşılan referans)
   let pdfDoc = null;
   let blobUrl = null;
-  let wrappers = [];      // her sayfa için sarmalayıcı <div>
+  let wrappers = [];      // her sayfa için sarmalayıcı <div> (içinde <img>)
   let renderTasks = new Map(); // index -> pdf.js render görevi
   let io = null;          // görünüre giren sayfaları tembel render eden gözlemci
   let currentIndex = 0;   // en üstteki görünür sayfa (0 tabanlı)
@@ -32,6 +41,11 @@ const Reader = (() => {
   let lastBodyWidth = 0;   // resize'da genişlik gerçekten değişti mi kontrolü
   let willChangeTimer = null;
 
+  // Aynı anda bellekte tutulan tüm sayfa görüntülerinin yaklaşık toplam piksel
+  // tavanı. Aşılınca ekrandaki sayfadan en uzak olanlar boşaltılır. Zoom arttıkça
+  // sayfa başına piksel büyüdüğü için canlı sayfa sayısı otomatik düşer.
+  const PIXEL_BUDGET = 40e6;
+
   async function open(bookRecord, onClose) {
     clearTimeout(closeTimer);      // önceki kapanış animasyonunu iptal et
     pagesEl.textContent = "";
@@ -40,10 +54,11 @@ const Reader = (() => {
     onCloseCb = onClose || null;
     zoom = 1;
     titleEl.textContent = book.title;
+
     view.hidden = false;
-    // will-change yalnızca kayma animasyonu boyunca; kalıcı bırakılırsa iOS,
-    // canvas dolu uzun kaydırma ağacını sürekli ayrı GPU katmanında tutar ve
-    // tile belleği yetmeyince siyah alanlar oluşur
+    // will-change yalnızca kayma animasyonu boyunca uygulanır; kalıcı bırakılırsa
+    // iOS, canvas/görüntü dolu uzun kaydırma ağacını sürekli ayrı bir GPU
+    // katmanında tutar ve tile belleği yetmeyince siyah alanlar oluşabilir.
     view.style.willChange = "transform";
     clearTimeout(willChangeTimer);
     willChangeTimer = setTimeout(() => { view.style.willChange = ""; }, 450);
@@ -98,8 +113,13 @@ const Reader = (() => {
       w._aspect = estAspect;
       w._rendered = false;
       w._rendering = false;
-      const canvas = document.createElement("canvas");
-      w.appendChild(canvas);
+      w._px = 0;          // bu sayfanın görüntü pikseli (bütçe için)
+      w._url = null;      // görüntü blob URL'i (temizlik için)
+      const img = document.createElement("img");
+      img.alt = "";
+      img.decoding = "async";
+      img.draggable = false;
+      w.appendChild(img);
       pagesEl.appendChild(w);
       wrappers.push(w);
     }
@@ -126,29 +146,46 @@ const Reader = (() => {
     w._rendering = true;
     try {
       const page = await pdfDoc.getPage(i + 1);
-      if (!pdfDoc) return; // bu arada kapandıysa
+      if (!pdfDoc || wrappers[i] !== w) return; // bu arada kapandı/değişti
       const baseViewport = page.getViewport({ scale: 1 });
       w._aspect = baseViewport.height / baseViewport.width;
 
       const cssW = parseFloat(w.style.width) || pageWidth();
       w.style.height = `${cssW * w._aspect}px`;
 
-      // dpr'yi 2 ile sınırla: 3x ekranlarda canvas belleği ~%55 azalır,
-      // görünür keskinlik farkı olmadan iOS Safari'nin canvas'ları siyaha
-      // çevirmesini (bellek boşaltma) önler
+      // dpr'yi 2 ile sınırla: 3x ekranlarda görüntü belleği ~%55 azalır,
+      // görünür keskinlik farkı olmadan.
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const scale = (cssW / baseViewport.width) * dpr;
       const viewport = page.getViewport({ scale });
 
-      const canvas = w.querySelector("canvas");
+      // ekran-dışı canvas (DOM'a EKLENMEZ)
+      const canvas = document.createElement("canvas");
       canvas.width = viewport.width;
       canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d");
+      // saydam PDF'lerde siyah zemin görünmesin diye önce beyaza boya
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      const task = page.render({ canvasContext: canvas.getContext("2d"), viewport });
+      const task = page.render({ canvasContext: ctx, viewport });
       renderTasks.set(i, task);
       await task.promise;
       renderTasks.delete(i);
+      if (!pdfDoc || wrappers[i] !== w) { canvas.width = 0; canvas.height = 0; return; }
 
+      // canvas → görüntü blob'u; ardından canvas'ı serbest bırak
+      const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+      canvas.width = 0;
+      canvas.height = 0;
+      if (!blob || !pdfDoc || wrappers[i] !== w) return;
+
+      const url = URL.createObjectURL(blob);
+      if (w._url) URL.revokeObjectURL(w._url);
+      w._url = url;
+      const img = w.querySelector("img");
+      if (img) img.src = url;
+      w._px = viewport.width * viewport.height;
       w._rendered = true;
       w.classList.add("rendered");
       enforceBudget();
@@ -167,37 +204,32 @@ const Reader = (() => {
     const task = renderTasks.get(i);
     if (task) { task.cancel(); renderTasks.delete(i); }
     if (!w._rendered && !w._rendering) return;
-    const canvas = w.querySelector("canvas");
-    if (canvas) { canvas.width = 0; canvas.height = 0; }
+    const img = w.querySelector("img");
+    if (img) img.removeAttribute("src");
+    if (w._url) { URL.revokeObjectURL(w._url); w._url = null; }
+    w._px = 0;
     w._rendered = false;
     w._rendering = false;
     w.classList.remove("rendered");
     // yükseklik korunur; kaydırma konumu sabit kalır
   }
 
-  // toplam canlı canvas pikselini sınırla; iOS Safari bellek tavanını aşınca
-  // tüm canvas'ları siyaha çevirdiği için, currentIndex'ten en uzak sayfaları
-  // boşaltarak toplamı bütçe altında tutarız (zoom arttıkça otomatik daralır)
-  const PIXEL_BUDGET = 48e6;
+  // toplam canlı görüntü pikselini bütçe altında tut; ekrandaki sayfadan
+  // en uzak olanları boşalt (görünen + komşusu daima korunur)
   function enforceBudget() {
-    const live = [];
     let total = 0;
+    const live = [];
     for (let i = 0; i < wrappers.length; i++) {
       const w = wrappers[i];
-      if (!w || !w._rendered) continue;
-      const c = w.querySelector("canvas");
-      const px = c ? c.width * c.height : 0;
-      live.push([i, px]);
-      total += px;
+      if (w && w._rendered) { live.push(i); total += w._px; }
     }
     if (total <= PIXEL_BUDGET) return;
-    // currentIndex'e en uzaktan başlayarak boşalt; görünen + komşusunu koru
-    live.sort((a, b) => Math.abs(b[0] - currentIndex) - Math.abs(a[0] - currentIndex));
-    for (const [i, px] of live) {
+    live.sort((a, b) => Math.abs(b - currentIndex) - Math.abs(a - currentIndex));
+    for (const i of live) {
       if (total <= PIXEL_BUDGET) break;
       if (Math.abs(i - currentIndex) <= 1) continue;
+      total -= wrappers[i]._px;
       unrender(i);
-      total -= px;
     }
   }
 
@@ -290,6 +322,9 @@ const Reader = (() => {
     for (const task of renderTasks.values()) task.cancel();
     renderTasks.clear();
     if (io) { io.disconnect(); io = null; }
+    for (const w of wrappers) {
+      if (w._url) { URL.revokeObjectURL(w._url); w._url = null; }
+    }
     if (pdfDoc) { pdfDoc.destroy(); pdfDoc = null; }
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
     const cb = onCloseCb;
@@ -315,6 +350,7 @@ const Reader = (() => {
     for (let i = 0; i < wrappers.length; i++) unrender(i); // yeni ölçekte yeniden çizilsin
     jumpToIndex(anchor, "auto");    // konumu koru
     currentIndex = anchor;
+    setupObserver();                // görünür tüm sayfalar yeniden tetiklensin
     renderNear();
   }
 
@@ -352,10 +388,10 @@ const Reader = (() => {
   let resizeTimer = null;
   window.addEventListener("resize", () => {
     if (view.hidden || !pdfDoc) return;
-    // Mobilde kaydırırken URL/araç çubuğu gizlenip görünür → sadece YÜKSEKLIK
+    // Mobilde kaydırırken URL/araç çubuğu gizlenip görünür → sadece YÜKSEKLİK
     // değişir ve resize tetiklenir. Sayfa genişliği değişmediyse yeniden düzen
-    // gereksiz; eskiden burada tüm sayfalar boşaltıldığı için dokununca siyah
-    // flaş oluyordu. Yalnızca genişlik gerçekten değişince yeniden düzenle.
+    // gereksiz; aksi halde sayfalar boşaltılıp siyah flaş oluşur. Yalnızca
+    // genişlik gerçekten değişince yeniden düzenle.
     if (body.clientWidth === lastBodyWidth) return;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
