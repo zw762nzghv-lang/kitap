@@ -55,6 +55,67 @@ const Backup = (() => {
     return { blob, count: headerBooks.length };
   }
 
+  /** Tek bir kitabı (PDF + kapak + okuma ilerlemesi) .klib Blob'una paketler. */
+  async function buildBookBlob(bookId) {
+    const book = await DB.getBook(bookId);
+    if (!book) throw new Error("not-found");
+    const fileRec = await DB.getFile(bookId);
+    const pdf = fileRec && fileRec.pdf;
+    if (!pdf) throw new Error("no-pdf");
+    const cover = book.coverBlob || null;
+
+    const headerBooks = [{
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      currentPage: book.currentPage,
+      totalPages: book.totalPages,
+      addedAt: book.addedAt,
+      lastReadAt: book.lastReadAt,
+      pdfSize: pdf.size,
+      pdfType: pdf.type || "application/pdf",
+      coverSize: cover ? cover.size : 0,
+      coverType: cover ? cover.type : "",
+    }];
+    const headerJson = new TextEncoder().encode(
+      JSON.stringify({ version: FORMAT_VERSION, exportedAt: Date.now(), books: headerBooks })
+    );
+    const lenBuf = new ArrayBuffer(4);
+    new DataView(lenBuf).setUint32(0, headerJson.byteLength, true);
+
+    const parts = [MAGIC, lenBuf, headerJson, pdf];
+    if (cover) parts.push(cover);
+    const blob = new Blob(parts, { type: "application/octet-stream" });
+    return { blob, book };
+  }
+
+  /** Tek kitabı native paylaşım ekranıyla paylaşır; desteklenmezse dosyayı indirir. */
+  async function shareBook(bookId) {
+    const { blob, book } = await buildBookBlob(bookId);
+    const safe =
+      (book.title || "kitap").replace(/[^\p{L}\p{N}\-_ ]/gu, "").trim().slice(0, 60) || "kitap";
+    const filename = `${safe}.klib`;
+    const file = new File([blob], filename, { type: "application/octet-stream" });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: book.title });
+        return "shared";
+      } catch (err) {
+        if (err && err.name === "AbortError") return "cancelled";
+        // paylaşım başarısızsa aşağıda indirmeye düş
+      }
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    return "downloaded";
+  }
+
   async function exportAll() {
     const { blob, count } = await buildBlob();
     const date = new Date().toISOString().slice(0, 10);
@@ -110,5 +171,5 @@ const Backup = (() => {
     return count;
   }
 
-  return { buildBlob, exportAll, readHeader, restore };
+  return { buildBlob, buildBookBlob, shareBook, exportAll, readHeader, restore };
 })();

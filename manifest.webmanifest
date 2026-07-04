@@ -8,6 +8,12 @@
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#f9f9f9",
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": { "application/octet-stream": [".klib"] }
+    }
+  ],
   "icons": [
     {
       "src": "icons/icon-192.png",

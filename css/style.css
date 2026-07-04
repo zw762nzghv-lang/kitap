@@ -465,6 +465,9 @@ input, textarea, [contenteditable] { -webkit-user-select: text; user-select: tex
 .icon-btn:disabled { opacity: 0.25; }
 /* açık/seçili geçiş düğmesi (gece okuma) — iOS dolgulu buton hissi */
 .icon-btn.on { background: var(--accent); color: #fff; }
+/* karanlık temada gece okuma düğmesi mavi olmasın — nötr görünüm, mavi dolgu efekti yok */
+[data-theme="dark"] #invert-toggle { color: var(--label); }
+[data-theme="dark"] #invert-toggle.on { background: var(--fill-strong); color: var(--label); }
 
 /* ilk sayfa gelene kadar merkezde ince yükleniyor animasyonu */
 .reader-spinner {

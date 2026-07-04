@@ -275,6 +275,22 @@ const App = (() => {
 
     const menu = document.createElement("div");
     menu.className = "card-menu";
+    const shareBtn = document.createElement("button");
+    shareBtn.type = "button";
+    shareBtn.className = "menu-item";
+    shareBtn.textContent = "Paylaş";
+    shareBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeCardMenus();
+      try {
+        const res = await Backup.shareBook(book.id);
+        if (res === "downloaded") toast("Kitap dosyası indirildi — paylaşabilirsiniz.");
+        else if (res === "shared") toast("Kitap paylaşıldı.");
+      } catch (err) {
+        console.error("Paylaşım hatası:", err);
+        toast("Paylaşım başarısız oldu.");
+      }
+    });
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.className = "menu-item";
@@ -304,7 +320,7 @@ const App = (() => {
       render();
       toast("Kitap silindi.");
     });
-    menu.append(editBtn, delBtn);
+    menu.append(shareBtn, editBtn, delBtn);
     menu.addEventListener("click", (e) => e.stopPropagation());
     coverEl.appendChild(menu);
   }
@@ -565,30 +581,38 @@ const App = (() => {
     restoreInput.click();
   });
 
-  restoreInput.addEventListener("change", async () => {
-    const file = restoreInput.files[0];
-    restoreInput.value = "";
-    if (!file) return;
+  // .klib dosyasını içe aktarır — hem "Geri Yükle" hem paylaşılan tek kitap için.
+  // Tek kitaplık dosyada mesaj "kitap ekle" olarak sadeleşir.
+  async function importKlibFile(file) {
     try {
       const { header, dataOffset } = await Backup.readHeader(file);
+      const one = header.books.length === 1 ? header.books[0] : null;
       const ok = await showConfirm({
-        title: "Yedeği geri yükle",
-        text: `Yedek dosyasında ${header.books.length} kitap var. Kitaplığınızdaki aynı kitapların üzerine yazılacak, diğerleri korunacak. Devam edilsin mi?`,
-        okText: "Geri Yükle",
+        title: one ? "Kitabı ekle" : "Yedeği geri yükle",
+        text: one
+          ? `"${one.title}" kütüphanenize eklenecek (okuma ilerlemesiyle birlikte). Aynı kitap varsa üzerine yazılır. Devam edilsin mi?`
+          : `Yedek dosyasında ${header.books.length} kitap var. Kitaplığınızdaki aynı kitapların üzerine yazılacak, diğerleri korunacak. Devam edilsin mi?`,
+        okText: one ? "Ekle" : "Geri Yükle",
       });
       if (!ok) return;
       const count = await Backup.restore(file, header, dataOffset);
       await loadBooks();
       render();
-      toast(`${count} kitap geri yüklendi.`);
+      toast(one ? `"${one.title}" eklendi.` : `${count} kitap geri yüklendi.`);
     } catch (err) {
-      console.error("Geri yükleme hatası:", err);
+      console.error("İçe aktarma hatası:", err);
       toast(
         err.message === "invalid-format"
           ? "Bu dosya geçerli bir kütüphane yedeği değil."
-          : "Geri yükleme başarısız oldu."
+          : "İçe aktarma başarısız oldu."
       );
     }
+  }
+
+  restoreInput.addEventListener("change", async () => {
+    const file = restoreInput.files[0];
+    restoreInput.value = "";
+    if (file) await importKlibFile(file);
   });
 
   // --- ekleme butonları ---
@@ -633,6 +657,22 @@ const App = (() => {
       navigator.serviceWorker
         .register("sw.js")
         .catch((err) => console.warn("Service worker kaydedilemedi:", err));
+    }
+
+    // Paylaşılan/açılan .klib dosyası (uygulama dosya işleyici olarak açılırsa)
+    // — destekleyen platformlarda dosyaya dokununca kütüphaneye eklenir.
+    if ("launchQueue" in window && "setConsumer" in window.launchQueue) {
+      window.launchQueue.setConsumer(async (params) => {
+        if (!params || !params.files || !params.files.length) return;
+        for (const handle of params.files) {
+          try {
+            const file = await handle.getFile();
+            await importKlibFile(file);
+          } catch (err) {
+            console.warn("Açılan dosya içe aktarılamadı:", err);
+          }
+        }
+      });
     }
   }
 
