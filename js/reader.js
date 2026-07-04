@@ -29,6 +29,8 @@ const Reader = (() => {
   let scrollRaf = null;
   let closeTimer = null;
   let onCloseCb = null;
+  let lastBodyWidth = 0;   // resize'da genişlik gerçekten değişti mi kontrolü
+  let willChangeTimer = null;
 
   async function open(bookRecord, onClose) {
     clearTimeout(closeTimer);      // önceki kapanış animasyonunu iptal et
@@ -39,6 +41,12 @@ const Reader = (() => {
     zoom = 1;
     titleEl.textContent = book.title;
     view.hidden = false;
+    // will-change yalnızca kayma animasyonu boyunca; kalıcı bırakılırsa iOS,
+    // canvas dolu uzun kaydırma ağacını sürekli ayrı GPU katmanında tutar ve
+    // tile belleği yetmeyince siyah alanlar oluşur
+    view.style.willChange = "transform";
+    clearTimeout(willChangeTimer);
+    willChangeTimer = setTimeout(() => { view.style.willChange = ""; }, 450);
     void view.offsetWidth;         // reflow → geçiş çalışsın
     view.classList.add("reader--open");
     document.body.style.overflow = "hidden";
@@ -64,6 +72,7 @@ const Reader = (() => {
 
       buildPages();
       layout();
+      lastBodyWidth = body.clientWidth;
       setupObserver();
 
       // kaldığı sayfaya konumlan
@@ -124,7 +133,10 @@ const Reader = (() => {
       const cssW = parseFloat(w.style.width) || pageWidth();
       w.style.height = `${cssW * w._aspect}px`;
 
-      const dpr = window.devicePixelRatio || 1;
+      // dpr'yi 2 ile sınırla: 3x ekranlarda canvas belleği ~%55 azalır,
+      // görünür keskinlik farkı olmadan iOS Safari'nin canvas'ları siyaha
+      // çevirmesini (bellek boşaltma) önler
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const scale = (cssW / baseViewport.width) * dpr;
       const viewport = page.getViewport({ scale });
 
@@ -139,6 +151,7 @@ const Reader = (() => {
 
       w._rendered = true;
       w.classList.add("rendered");
+      enforceBudget();
     } catch (err) {
       if (!(err && err.name === "RenderingCancelledException")) {
         console.error("Sayfa render edilemedi:", err);
@@ -162,6 +175,32 @@ const Reader = (() => {
     // yükseklik korunur; kaydırma konumu sabit kalır
   }
 
+  // toplam canlı canvas pikselini sınırla; iOS Safari bellek tavanını aşınca
+  // tüm canvas'ları siyaha çevirdiği için, currentIndex'ten en uzak sayfaları
+  // boşaltarak toplamı bütçe altında tutarız (zoom arttıkça otomatik daralır)
+  const PIXEL_BUDGET = 48e6;
+  function enforceBudget() {
+    const live = [];
+    let total = 0;
+    for (let i = 0; i < wrappers.length; i++) {
+      const w = wrappers[i];
+      if (!w || !w._rendered) continue;
+      const c = w.querySelector("canvas");
+      const px = c ? c.width * c.height : 0;
+      live.push([i, px]);
+      total += px;
+    }
+    if (total <= PIXEL_BUDGET) return;
+    // currentIndex'e en uzaktan başlayarak boşalt; görünen + komşusunu koru
+    live.sort((a, b) => Math.abs(b[0] - currentIndex) - Math.abs(a[0] - currentIndex));
+    for (const [i, px] of live) {
+      if (total <= PIXEL_BUDGET) break;
+      if (Math.abs(i - currentIndex) <= 1) continue;
+      unrender(i);
+      total -= px;
+    }
+  }
+
   // görünür pencere çevresindeki sayfaları render et
   function renderNear() {
     const span = 2;
@@ -178,7 +217,7 @@ const Reader = (() => {
         if (e.isIntersecting) render(i);
         else unrender(i); // pencereden çıkan sayfaları serbest bırak (bellek)
       }
-    }, { root: body, rootMargin: "600px 0px" });
+    }, { root: body, rootMargin: "400px 0px" });
     for (const w of wrappers) io.observe(w);
   }
 
@@ -245,6 +284,8 @@ const Reader = (() => {
   function close() {
     if (view.hidden) return;
     flushSave();
+    clearTimeout(willChangeTimer);
+    view.style.willChange = "transform";      // çıkış animasyonu boyunca
     view.classList.remove("reader--open");   // sağa doğru kayarak çık
     for (const task of renderTasks.values()) task.cancel();
     renderTasks.clear();
@@ -260,6 +301,7 @@ const Reader = (() => {
       pagesEl.textContent = "";
       wrappers = [];
       view.hidden = true;
+      view.style.willChange = "";
       document.body.style.overflow = "";
     }, 360);
     if (cb) cb();
@@ -310,12 +352,20 @@ const Reader = (() => {
   let resizeTimer = null;
   window.addEventListener("resize", () => {
     if (view.hidden || !pdfDoc) return;
+    // Mobilde kaydırırken URL/araç çubuğu gizlenip görünür → sadece YÜKSEKLIK
+    // değişir ve resize tetiklenir. Sayfa genişliği değişmediyse yeniden düzen
+    // gereksiz; eskiden burada tüm sayfalar boşaltıldığı için dokununca siyah
+    // flaş oluyordu. Yalnızca genişlik gerçekten değişince yeniden düzenle.
+    if (body.clientWidth === lastBodyWidth) return;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
+      if (view.hidden || !pdfDoc) return;
+      lastBodyWidth = body.clientWidth;
       const anchor = currentIndex;
       layout();
       for (let i = 0; i < wrappers.length; i++) unrender(i);
       jumpToIndex(anchor, "auto");
+      setupObserver();   // görünür TÜM sayfalar yeniden tetiklensin (yalnız ±2 değil)
       renderNear();
     }, 150);
   });
