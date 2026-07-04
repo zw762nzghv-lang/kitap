@@ -24,6 +24,17 @@ const Reader = (() => {
   const pageTotal = document.getElementById("page-total");
   const btnPrev = document.getElementById("page-prev");
   const btnNext = document.getElementById("page-next");
+  const btnInvert = document.getElementById("invert-toggle");
+  const spinnerEl = document.getElementById("reader-spinner");
+
+  // gece okuma tercihi (tema gibi kalıcı, okumaya özgü)
+  const INVERT_KEY = "kutuphane-invert";
+  let invert = localStorage.getItem(INVERT_KEY) === "1";
+  function applyInvert() {
+    view.classList.toggle("reader--invert", invert);
+    btnInvert.classList.toggle("on", invert);
+    btnInvert.setAttribute("aria-pressed", String(invert));
+  }
 
   let book = null;        // App'in bellekteki kitap nesnesi (paylaşılan referans)
   let pdfDoc = null;
@@ -40,6 +51,18 @@ const Reader = (() => {
   let onCloseCb = null;
   let lastBodyWidth = 0;   // resize'da genişlik gerçekten değişti mi kontrolü
   let willChangeTimer = null;
+  let firstPaintPending = false;  // ilk sayfa henüz gelmedi → spinner göster
+  let spinnerTimer = null;
+
+  // Hızlı açılışlarda spinner çakmasın diye 150ms gecikmeyle göster.
+  function showSpinner() {
+    clearTimeout(spinnerTimer);
+    spinnerTimer = setTimeout(() => { spinnerEl.hidden = false; }, 150);
+  }
+  function hideSpinner() {
+    clearTimeout(spinnerTimer);
+    spinnerEl.hidden = true;
+  }
 
   // Aynı anda bellekte tutulan tüm sayfa görüntülerinin yaklaşık toplam piksel
   // tavanı. Aşılınca ekrandaki sayfadan en uzak olanlar boşaltılır. Zoom arttıkça
@@ -64,7 +87,10 @@ const Reader = (() => {
     willChangeTimer = setTimeout(() => { view.style.willChange = ""; }, 450);
     void view.offsetWidth;         // reflow → geçiş çalışsın
     view.classList.add("reader--open");
+    applyInvert();                 // kayıtlı gece okuma tercihini uygula
     document.body.style.overflow = "hidden";
+    firstPaintPending = true;      // ilk sayfa gelene kadar yükleniyor göster
+    showSpinner();
 
     try {
       const fileRec = await DB.getFile(book.id);
@@ -195,6 +221,11 @@ const Reader = (() => {
       }
     } finally {
       w._rendering = false;
+      // landing sayfası ilk kez çizildiğinde (başarı ya da hata) spinner'ı kaldır
+      if (firstPaintPending && i === currentIndex) {
+        firstPaintPending = false;
+        hideSpinner();
+      }
     }
   }
 
@@ -316,6 +347,8 @@ const Reader = (() => {
   function close() {
     if (view.hidden) return;
     flushSave();
+    firstPaintPending = false;
+    hideSpinner();
     clearTimeout(willChangeTimer);
     view.style.willChange = "transform";      // çıkış animasyonu boyunca
     view.classList.remove("reader--open");   // sağa doğru kayarak çık
@@ -360,6 +393,11 @@ const Reader = (() => {
   btnNext.addEventListener("click", () => goTo(currentIndex + 2));   // bir sonraki sayfa
   document.getElementById("zoom-in").addEventListener("click", () => setZoom(zoom * 1.25));
   document.getElementById("zoom-out").addEventListener("click", () => setZoom(zoom / 1.25));
+  btnInvert.addEventListener("click", () => {
+    invert = !invert;
+    localStorage.setItem(INVERT_KEY, invert ? "1" : "0");
+    applyInvert();
+  });
 
   pageInput.addEventListener("change", () => {
     const n = parseInt(pageInput.value, 10);

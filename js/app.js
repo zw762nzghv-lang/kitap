@@ -83,6 +83,31 @@ const App = (() => {
       .trim();
   }
 
+  // PDF'in ilk sayfasını küçük bir kapak görüntüsüne (JPEG blob) çevirir.
+  // Kullanıcı kendi kapağını yüklemediğinde otomatik kapak olarak kullanılır.
+  async function renderFirstPageCover(doc) {
+    try {
+      const page = await doc.getPage(1);
+      const base = page.getViewport({ scale: 1 });
+      const targetW = 420; // kapak için yeterli çözünürlük (retina'da da net)
+      const viewport = page.getViewport({ scale: targetW / base.width });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff"; // saydam PDF'lerde siyah zemin görünmesin
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.82));
+      canvas.width = 0;
+      canvas.height = 0;
+      return blob;
+    } catch (err) {
+      console.warn("Otomatik kapak üretilemedi:", err);
+      return null;
+    }
+  }
+
   // --- placeholder kapak (tipografik, tema uyumlu) ---
   function placeholderCover(title, author) {
     let hash = 0;
@@ -399,20 +424,22 @@ const App = (() => {
           return;
         }
         let totalPages = 0;
+        let autoCover = null;
         try {
           const url = URL.createObjectURL(pdfFile);
           const doc = await pdfjsLib.getDocument(url).promise;
           totalPages = doc.numPages;
+          if (!newCover) autoCover = await renderFirstPageCover(doc); // kapak yoksa ilk sayfadan üret
           doc.destroy();
           URL.revokeObjectURL(url);
         } catch (err) {
-          console.warn("Sayfa sayısı okunamadı:", err);
+          console.warn("PDF okunamadı:", err);
         }
         const book = {
           id: crypto.randomUUID(),
           title,
           author,
-          coverBlob: newCover,
+          coverBlob: newCover || autoCover,
           currentPage: 1,
           totalPages,
           addedAt: Date.now(),

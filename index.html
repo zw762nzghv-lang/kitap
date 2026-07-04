@@ -93,6 +93,9 @@
       </button>
       <div class="reader-nav-title" id="reader-title"></div>
       <div class="reader-nav-actions">
+        <button class="icon-btn" id="invert-toggle" title="Gece okuma" aria-label="Gece okuma" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.3A8.3 8.3 0 0 1 9.7 3.5 8.3 8.3 0 1 0 20.5 14.3Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        </button>
         <button class="icon-btn" id="zoom-out" title="Uzaklaştır" aria-label="Uzaklaştır">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
@@ -104,6 +107,7 @@
     <div class="reader-body" id="reader-body">
       <div class="pdf-pages" id="pdf-pages"></div>
     </div>
+    <div class="reader-spinner" id="reader-spinner" hidden aria-hidden="true"><span class="spinner"></span></div>
     <div class="reader-pagebar">
       <button class="icon-btn" id="page-prev" title="Önceki sayfa" aria-label="Önceki sayfa">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
