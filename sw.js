@@ -1,105 +1,62 @@
-/* Service worker — uygulama kabuğu + pdf.js CDN dosyaları precache edilir,
-   fontlar ilk kullanımda cache'lenir; sonrasında her şey çevrimdışı çalışır. */
-"use strict";
+/* ==========================================================================
+   mecra — basit service worker (PWA kabuğu)
+   Amaç: uygulama kabuğunu (HTML/CSS/JS/ikon) çevrimdışı önbelleğe almak.
+   Feed'ler DAİMA ağdan gelir; onları önbelleğe almıyoruz (taze içerik önemli).
+   ========================================================================== */
 
-const CACHE_NAME = "kutuphane-v9";
+// Kabuk dosyaları her değiştiğinde bu sürümü artır → eski önbellek atılır, taze sunulur.
+const CACHE = 'mecra-shell-v9';
 
-const PRECACHE = [
-  "./",
-  "./index.html",
-  "./css/style.css",
-  "./js/db.js",
-  "./js/reader.js",
-  "./js/backup.js",
-  "./js/app.js",
-  "./manifest.webmanifest",
-  "./icons/favicon.svg",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js",
-  "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600&display=swap",
+// Uygulama kabuğu — çevrimdışı açılış için gereken statik dosyalar.
+const SHELL = [
+  './',
+  './index.html',
+  './styles.css',
+  './app.js',
+  './manifest.webmanifest',
+  './icons/icon.svg',
 ];
 
-// runtime'da cache'lenmesine izin verilen dış kaynaklar (font dosyaları vb.)
-const RUNTIME_HOSTS = [
-  "fonts.googleapis.com",
-  "fonts.gstatic.com",
-  "cdnjs.cloudflare.com",
-];
-
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) =>
-        Promise.all(
-          PRECACHE.map((url) =>
-            cache.add(new Request(url, { cache: "reload" })).catch((err) => {
-              console.warn("Precache başarısız:", url, err);
-            })
-          )
-        )
-      )
-      .then(() => self.skipWaiting())
+// Kurulum: kabuğu önbelleğe al.
+self.addEventListener('install', (e) => {
+  e.waitUntil(
+    caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())
   );
 });
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-      )
-      .then(() => self.clients.claim())
+// Etkinleşme: eski sürüm önbelleklerini temizle.
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+    ).then(() => self.clients.claim())
   );
 });
 
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  if (req.method !== "GET") return;
+// Getirme stratejisi:
+//  - Feed/proxy istekleri: her zaman ağdan (önbelleğe alma).
+//  - Kabuk dosyaları: önce önbellek, yoksa ağ (çevrimdışı da açılsın).
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
   const sameOrigin = url.origin === self.location.origin;
-  if (!sameOrigin && !RUNTIME_HOSTS.includes(url.hostname)) return;
 
-  if (sameOrigin) {
-    // kendi dosyalarımız: network-first — güncellemeler hemen gelsin,
-    // çevrimdışıyken cache'e düşülsün
-    event.respondWith(
-      fetch(req)
+  // Yabancı istekler (proxy/feed/görsel) → doğrudan ağa, dokunma.
+  if (!sameOrigin) return;
+
+  e.respondWith(
+    caches.match(req).then((hit) => {
+      if (hit) return hit;
+      return fetch(req)
         .then((res) => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          }
+          // Aynı köken statik dosyayı fırsattan önbelleğe ekle.
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
           return res;
         })
-        .catch(() =>
-          caches
-            .match(req, { ignoreSearch: req.mode === "navigate" })
-            .then((cached) => {
-              if (cached) return cached;
-              if (req.mode === "navigate") return caches.match("./index.html");
-              return Response.error();
-            })
-        )
-    );
-    return;
-  }
-
-  // CDN dosyaları sürümlü/değişmez: cache-first
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req).then((res) => {
-        if (res && (res.ok || res.type === "opaque")) {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-        }
-        return res;
-      });
+        .catch(() => caches.match('./index.html'));   // çevrimdışı yedeği
     })
   );
 });
